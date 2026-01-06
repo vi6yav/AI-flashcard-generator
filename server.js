@@ -1,98 +1,61 @@
-// server.js
-require('dotenv').config(); 
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const path = require('path');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenAI } = require('@google/genai'); // Using the 2026 Unified SDK
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = 5500;
 
-// 1. SETUP: Unified Client for 2026
-// Make sure GEMINI_API_KEY and MONGO_URI are in your .env file
+// 1. INITIALIZE CLIENT (Picked up automatically from GEMINI_API_KEY in .env)
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const MONGO_URI = process.env.MONGO_URI;
 
+// 2. MIDDLEWARE & STATIC FILES (Fixes 404)
 app.use(express.json());
-app.use(express.static('public')); 
+const publicPath = path.join(__dirname, 'public');
+app.use(express.static(publicPath));
 
+// Explicit route to ensure index.html is found
 app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+    res.sendFile(path.join(publicPath, 'index.html'));
 });
 
-// 2. MONGODB SCHEMA
-const FlashcardSchema = new mongoose.Schema({
-    question: { type: String, required: true },
-    answer: { type: String, required: true },
-    source_topic: { type: String, required: true },
-    created_at: { type: Date, default: Date.now }
-});
-const Flashcard = mongoose.model('Flashcard', FlashcardSchema);
-
-// 3. API ROUTE: GENERATE (POST)
+// 3. GENERATE ROUTE (With 2026 Retry Logic & Unified Interface)
 app.post('/generate', async (req, res) => {
     const { topicName, sourceText } = req.body;
+    let attempts = 0;
+    const maxRetries = 3;
 
-    if (!topicName || !sourceText) {
-        return res.status(400).json({ error: 'Topic and Text are required.' });
-    }
+    while (attempts < maxRetries) {
+        try {
+            // New unified syntax: ai.models.generateContent
+            const response = await ai.models.generateContent({
+                model: 'gemini-2.5-flash-lite', // Using 1.5-flash for higher free-tier quota
+                contents: `Generate 10 flashcards (JSON format: [{question, answer}]) for topic: ${topicName}. Context: ${sourceText}`,
+                config: { responseMimeType: 'application/json' }
+            });
 
-    const prompt = `You are a professional study guide creator. Generate 10 Question and Answer flashcards in JSON format for the topic: ${topicName}. 
-    Use this text: ${sourceText}. 
-    Return ONLY a JSON array of objects with "question" and "answer" keys.`;
-    
-    try {
-        // Use the fast, stable 2.0-flash model
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.0-flash', 
-            contents: prompt,
-            config: { responseMimeType: 'application/json' }
-        });
+            const flashcards = JSON.parse(response.text);
+            return res.json({ success: true, data: flashcards });
 
-        // The SDK returns text as a property
-        const flashcardData = JSON.parse(response.text);
-
-        const documentsToSave = flashcardData.map(card => ({
-            ...card,
-            source_topic: topicName
-        }));
-
-        const savedCards = await Flashcard.insertMany(documentsToSave);
-        console.log(`✅ Saved ${savedCards.length} cards for: ${topicName}`);
-
-        res.json({ message: 'Flashcards saved successfully!', count: savedCards.length });
-
-    } catch (error) {
-        console.error("AI Generation Error:", error);
-        res.status(500).json({ error: 'Failed to generate flashcards. Check console.' });
+        } catch (error) {
+            // 429 = Resource Exhausted (Rate Limit)
+            if (error.status === 429 && attempts < maxRetries - 1) {
+                attempts++;
+                console.log(`⚠️ Rate limit hit. Retrying in 5s... (Attempt ${attempts})`);
+                await new Promise(resolve => setTimeout(resolve, 5000)); // 5-second cooldown
+            } else {
+                console.error("Final Error:", error.message);
+                return res.status(error.status || 500).json({ error: error.message });
+            }
+        }
     }
 });
 
-// 4. API ROUTE: GET ALL (GET)
-app.get('/flashcards', async (req, res) => {
-    try {
-        const allCards = await Flashcard.find().sort({ created_at: -1 });
-        res.json(allCards);
-    } catch (error) {
-        res.status(500).json({ error: 'Database retrieval failed.' });
-    }
-});
-
-// 5. START SERVER
-async function startServer() {
-    try {
-        if (!MONGO_URI) throw new Error("Missing MONGO_URI in .env file");
-        
-        await mongoose.connect(MONGO_URI);
+// 4. DATABASE & SERVER START
+mongoose.connect(process.env.MONGO_URI)
+    .then(() => {
         console.log("✅ Database Connected");
-
-        app.listen(PORT, () => {
-            console.log(`🚀 Server running at http://localhost:${PORT}`);
-        });
-    } catch (error) {
-        console.error("❌ Startup Error:", error.message);
-        process.exit(1);
-    }
-}
-
-startServer();
+        app.listen(PORT, () => console.log(`🚀 Server active: http://localhost:${PORT}`));
+    })
+    .catch(err => console.error("❌ DB Connection Failed:", err));
