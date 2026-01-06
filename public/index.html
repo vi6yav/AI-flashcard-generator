@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Flashcard Generator</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .container { max-width: 800px; margin: 0 auto; }
+        textarea, input[type="text"] { width: 100%; padding: 10px; margin-bottom: 10px; box-sizing: border-box; }
+        button { padding: 10px 15px; background-color: #4CAF50; color: white; border: none; cursor: pointer; }
+        button:hover { background-color: #45a049; }
+        #flashcard-display { margin-top: 20px; border-top: 1px solid #ccc; padding-top: 15px; }
+        .card { background: #f9f9f9; padding: 15px; margin-bottom: 10px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+        .card h4 { color: #333; margin-top: 0; }
+        .card .answer { display: none; margin-top: 5px; padding-left: 10px; border-left: 3px solid #007bff; }
+        .show-answer-btn { background-color: #007bff; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>🧠 Gemini-Powered Flashcard Generator</h2>
+        
+        <input type="text" id="topic-name" placeholder="Enter Topic Name (e.g., Stages of Mitosis)" required>
+        <textarea id="source-text" rows="10" placeholder="Paste your study notes or article text here..." required></textarea>
+        <button onclick="generateCards()">Generate & Save Flashcards</button>
+        <p id="message" style="font-weight: bold;"></p>
+
+        <h3>📚 Saved Flashcards</h3>
+        <button onclick="fetchCards()">Load All Saved Cards</button>
+        <div id="flashcard-display">
+            </div>
+    </div>
+
+    <script>
+        async function generateCards() {
+            const topicName = document.getElementById('topic-name').value;
+            const sourceText = document.getElementById('source-text').value;
+            const messageElement = document.getElementById('message');
+            
+            if (!topicName || !sourceText) {
+                messageElement.textContent = 'Please fill in both the Topic Name and Source Text.';
+                return;
+            }
+
+            messageElement.textContent = 'Generating cards... Please wait (this may take a few seconds)';
+            
+            try {
+                // Calls the POST /generate route in server.js
+                const response = await fetch('/generate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ topicName, sourceText })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    messageElement.textContent = `Success! ${data.count} flashcards generated and saved.`;
+                    fetchCards(); // Automatically refresh the list
+                } else {
+                    messageElement.textContent = `Error: ${data.error || 'Failed to process request.'}`;
+                }
+            } catch (error) {
+                messageElement.textContent = 'A network error occurred. Is the server running?';
+                console.error(error);
+            }
+        }
+
+        async function fetchCards() {
+            const display = document.getElementById('flashcard-display');
+            display.innerHTML = 'Loading...';
+
+            try {
+                // Calls the GET /flashcards route in server.js
+                const response = await fetch('/flashcards');
+                const cards = await response.json();
+
+                display.innerHTML = ''; // Clear display
+                
+                if (cards.length === 0) {
+                    display.innerHTML = 'No flashcards saved yet. Generate some above!';
+                    return;
+                }
+
+                cards.forEach(card => {
+                    const cardDiv = document.createElement('div');
+                    cardDiv.className = 'card';
+                    cardDiv.innerHTML = `
+                        <h4>Q: ${card.question}</h4>
+                        <button class="show-answer-btn" onclick="this.nextElementSibling.style.display = 'block'; this.style.display = 'none'">Show Answer</button>
+                        <p class="answer">A: ${card.answer}</p>
+                        <small>Topic: ${card.source_topic}</small>
+                    `;
+                    display.appendChild(cardDiv);
+                });
+            } catch (error) {
+                display.innerHTML = 'Failed to load flashcards.';
+                console.error(error);
+            }
+        }
+    </script>
+</body>
+</html>
