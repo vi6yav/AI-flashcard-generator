@@ -6,5 +6,10 @@
   "action": {
     "default_popup": "popup.html"
   },
-  "permissions": ["activeTab"]
+  "permissions": ["activeTab"],
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "flashcard-gen@example.com"
+    }
+  }
 }
